@@ -1,76 +1,105 @@
-GPT-4 Style Large Language Model
+# GPT-4 Style Large Language Model
 
 Welcome to my custom GPT-4 inspired LLM repository! This project includes everything from training to efficient inference, with advanced features like paged KV caching, hybrid INT8-FP16 keys and values, YaRN RoPE embeddings, and speculative decoding for faster generation.
 
 Think of this as a full-stack LLM repo, from dataset preprocessing to inference-ready deployment.
 
-Repo Structure
+# Repo Structure
 
 /config
-model.yaml # Model hyperparameters
-train.yaml # Training parameters
+model.yaml 
+# Model hyperparameters
+train.yaml 
+# Training parameters
 
 /deepspeed
-ds_zero2.json # DeepSpeed configuration for distributed training
+ds_zero2.json 
+# DeepSpeed configuration for distributed training
 
 /eval
-gsm8.py # GSM8K evaluation script
-perplexity.py # Perplexity evaluation script
+gsm8.py 
+# GSM8K evaluation script
+perplexity.py 
+# Perplexity evaluation script
 
 /inference
-paged_kv.py # Paged KV allocator + helpers
-attention.py # Inference attention layer (hybrid KV, RoPE)
-block.py # Transformer block (inference)
-transformer.py # Full transformer model (inference)
-speculative.py # Speculative decoding logic
+paged_kv.py 
+# Paged KV allocator + helpers
+attention.py 
+# Inference attention layer (hybrid KV, RoPE)
+block.py 
+# Transformer block (inference)
+transformer.py 
+# Full transformer model (inference)
+speculative.py 
+# Speculative decoding logic
 
 /model
-attention.py # Training attention layer
-blocks.py # Transformer block for training
-gpt.py # Model wrapper for training
-moe.py # MoE layers (optional)
-rmsnorm.py # RMSNorm implementation
-rope.py # RoPE helpers
+attention.py 
+# Training attention layer
+blocks.py 
+# Transformer block for training
+gpt.py 
+# Model wrapper for training
+moe.py 
+# MoE layers (optional)
+rmsnorm.py 
+# RMSNorm implementation
+rope.py 
+# RoPE helpers
 
 /scripts
-eval.py # Evaluate trained model
-launch_ddp.sh # Launch DDP training
-lauch_deepspeed.sh # Launch DeepSpeed training
-preprocess_data.py # Dataset preprocessing
+eval.py 
+# Evaluate trained model
+launch_ddp.sh 
+# Launch DDP training
+lauch_deepspeed.sh 
+# Launch DeepSpeed training
+preprocess_data.py 
+# Dataset preprocessing
 
 /tokenizer
-tokenizer.py # Tokenizer for training and inference
-train_tokenizer.py # Tokenizer training script
+tokenizer.py 
+# Tokenizer for training and inference
+train_tokenizer.py 
+# Tokenizer training script
 
 /training
-checkpoint.py # Save/load checkpoints
-dataset.py # Dataset loader
-distributed.py # Distributed training helpers
-loss_mask.py # Loss masking
-optimizer.py # Optimizer wrapper
-scheduler.py # Learning rate scheduler
-train.py # Training loop
+checkpoint.py 
+# Save/load checkpoints
+dataset.py 
+# Dataset loader
+distributed.py 
+# Distributed training helpers
+loss_mask.py 
+# Loss masking
+optimizer.py 
+# Optimizer wrapper
+scheduler.py 
+# Learning rate scheduler
+train.py 
+# Training loop
 
-Installation
+# Installation
 
-Create virtual environment
+  # Create virtual environment
 
 python -m venv venv
 source venv/bin/activate
 
-Install dependencies
+  # Install dependencies
 
 pip install torch deepspeed numpy transformers
 
 GPU is highly recommended for both training and inference (CUDA >= 11.7).
 
-Training
+# Training
 
 Configure model and training parameters in /config/model.yaml and /config/train.yaml.
 
 Prepare your dataset using /scripts/preprocess_data.py.
 
-Launch distributed training:
+# Launch distributed training:
 
 bash scripts/lauch_deepspeed.sh
 or
@@ -78,11 +107,11 @@ python -m torch.distributed.run --nproc_per_node=8 scripts/train.py
 
 Model checkpoints are saved in /training/checkpoints/.
 
-Inference
+# Inference
 
 This repository separates training and inference pipelines for efficiency.
 
-Initialize KV pools:
+# Initialize KV pools:
 
 from inference.paged_kv import PageAllocator, KVState, PAGE_SIZE, MAX_PAGES
 import torch
@@ -93,7 +122,7 @@ V_pool = torch.zeros(MAX_PAGES,16,PAGE_SIZE,128,device=device)
 allocator = PageAllocator(MAX_PAGES)
 state = KVState()
 
-Load the transformer model:
+# Load the transformer model:
 
 from inference.transformer import Transformer
 model = Transformer().to(device)
@@ -107,7 +136,7 @@ Optional: use speculative decoding for faster generation:
 from inference.speculative import speculative_decode
 output_ids = speculative_decode(target_model, draft_model, input_ids, max_new_tokens=50)
 
-Features
+# Features
 
 Paged KV Cache: Efficient memory management for long-context sequences (~32k tokens)
 
@@ -121,7 +150,7 @@ FlashAttention Support: If available, boosts attention speed
 
 Training vs Inference Split: /model contains training modules; /inference optimized for deployment
 
-Tips for Developers
+# Tips for Developers
 
 Always match the tokenizer with your model configuration.
 
@@ -131,7 +160,7 @@ Use GPU memory monitoring when increasing BLOCK_SIZE or sequence length.
 
 Hybrid KV cache reduces memory usage ~50% without major quality loss.
 
-Contributing
+# Contributing
 
 Fork the repository
 
@@ -139,11 +168,11 @@ Add features (datasets, attention variants, inference optimizations)
 
 Test thoroughly and submit PRs with documentation
 
-License
+# License
 
 MIT License
 
-Notes
+# Notes
 
 Inference and training implementations are different by design:
 

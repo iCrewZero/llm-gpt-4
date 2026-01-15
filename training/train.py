@@ -1,22 +1,44 @@
 import torch
 import torch.nn.functional as F
 from model.gpt import GPT
+from training.memory_profiler import MemoryProfiler
 
-model = GPT(vocab_size=32000, dim=512, layers=6, heads=8).cuda()
-opt = torch.optim.AdamW(model.parameters(), lr=3e-4)
+VOCAB = 32000
+BATCH = 2
+SEQ   = 2048
+DEVICE = "cuda"
+model = GPT(
+    vocab_size=VOCAB,
+    dim=2048,
+    layers=24,
+    heads=16,
+).to(DEVICE)
 
-for step in range(100000):
-    x = torch.randint(0, 32000, (8, 128)).cuda()
-    logits = model(x)
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4)
+profiler = MemoryProfiler()
+x = torch.randint(0, VOCAB, (BATCH, SEQ), device=DEVICE)
+with torch.no_grad():
+    _ = model(x)
 
-    loss = F.cross_entropy(
-        logits[:, :-1].reshape(-1, 32000),
-        x[:, 1:].reshape(-1)
-    )
+torch.cuda.reset_peak_memory_stats()
+profiler.snapshot("start")
+model.train()
 
-    opt.zero_grad()
-    loss.backward()
-    opt.step()
+x = torch.randint(0, VOCAB, (BATCH, SEQ), device=DEVICE)
 
-    if step % 100 == 0:
-        print(step, loss.item())
+logits = model(x)
+profiler.snapshot("after_forward")
+
+loss = F.cross_entropy(
+    logits[:, :-1].reshape(-1, VOCAB),
+    x[:, 1:].reshape(-1),
+)
+
+optimizer.zero_grad()
+loss.backward()
+profiler.snapshot("after_backward")
+
+optimizer.step()
+profiler.snapshot("after_step")
+print("loss:", loss.item())
+profiler.report()

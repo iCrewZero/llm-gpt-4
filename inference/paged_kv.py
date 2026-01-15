@@ -1,5 +1,6 @@
 import torch
 
+
 class PageAllocator:
     def __init__(self, num_pages: int, page_size: int):
         self.num_pages = num_pages

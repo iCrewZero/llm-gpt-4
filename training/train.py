@@ -32,15 +32,12 @@ def train_step(
 
     loss = ce
 
-    # 🔹 Multi-Token Prediction
     loss += mtp_loss(hidden, labels)
 
-    # 🔹 MoE load balance (aux-loss-free)
     if router_stats is not None:
         load = router_stats.mean(dim=0)
         loss += load.var() * 0.01
 
-    # 🔹 Process Reward Model (optional RL phase)
     if prm is not None:
         rewards = prm(hidden.detach())
         loss += grpo_loss(logits[:, :-1], labels[:, 1:], rewards)

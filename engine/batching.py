@@ -1,9 +1,12 @@
-class BatchScheduler:
-    def __init__(self):
+class ContinuousBatcher:
+    def __init__(self, max_batch):
+        self.max_batch = max_batch
         self.queue = []
 
-    def add(self, request):
-        self.queue.append(request)
+    def add(self, req):
+        self.queue.append(req)
 
-    def batch(self):
-        return torch.cat(self.queue, dim=0)
+    def next_batch(self):
+        batch = self.queue[:self.max_batch]
+        self.queue = self.queue[self.max_batch:]
+        return batch

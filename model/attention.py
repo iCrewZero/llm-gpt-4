@@ -1,27 +1,34 @@
-import torch, torch.nn as nn, torch.nn.functional as F
-from model.rope import RoPE
-from kv.paged_kv import append_token
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from .rope import YaRNRoPE
 
-class Attention(nn.Module):
-    def __init__(self, cfg):
+class CausalSelfAttention(nn.Module):
+    def __init__(self, dim, n_head, n_kv_head, rope):
         super().__init__()
-        d = cfg.dim
-        self.h = cfg.n_heads
-        self.dh = d // cfg.n_heads
-        self.qkv = nn.Linear(d, d*3, False)
-        self.o = nn.Linear(d,d,False)
-        self.rope = RoPE(self.dh)
+        self.n_head = n_head
+        self.n_kv_head = n_kv_head
+        self.head_dim = dim // n_head
 
-    def forward(self, x, state, alloc, page):
+        self.q = nn.Linear(dim, dim, bias=False)
+        self.kv = nn.Linear(dim, 2 * n_kv_head * self.head_dim, bias=False)
+        self.o = nn.Linear(dim, dim, bias=False)
+
+        self.rope = rope
+
+    def forward(self, x, pos):
         B,T,C = x.shape
-        q,k,v = self.qkv(x).chunk(3,-1)
-        q = q.view(B,T,self.h,self.dh).transpose(1,2)
-        k = k.view(B,T,self.h,self.dh).transpose(1,2)
-        v = v.view(B,T,self.h,self.dh).transpose(1,2)
-        q,k = self.rope.apply(q,k,state.seq_len)
 
-        for _ in range(T):
-            append_token(state, alloc, page)
+        q = self.q(x).view(B,T,self.n_head,self.head_dim).transpose(1,2)
+        kv = self.kv(x).view(B,T,2,self.n_kv_head,self.head_dim)
+        k,v = kv[:,:,0], kv[:,:,1]
 
-        out = F.scaled_dot_product_attention(q,k,v,is_causal=True)
-        return self.o(out.transpose(1,2).reshape(B,T,C))
+        q,k = self.rope.apply(q, k.transpose(1,2), pos)
+        k = k.transpose(1,2)
+
+        k = k.repeat_interleave(self.n_head//self.n_kv_head, dim=1)
+        v = v.repeat_interleave(self.n_head//self.n_kv_head, dim=1)
+
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        out = out.transpose(1,2).reshape(B,T,C)
+        return self.o(out)

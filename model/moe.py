@@ -1,27 +1,28 @@
 import torch
 import torch.nn as nn
-from .router import Router
+from .router import TopKRouter
 
 class MoE(nn.Module):
     def __init__(self, dim, n_experts, topk):
         super().__init__()
-        self.router = Router(dim, n_experts, topk)
+        self.router = TopKRouter(dim, n_experts, topk)
         self.experts = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(dim, 4*dim),
+                nn.Linear(dim, dim*4),
                 nn.GELU(),
-                nn.Linear(4*dim, dim)
+                nn.Linear(dim*4, dim)
             ) for _ in range(n_experts)
         ])
 
     def forward(self, x):
-        idx, w = self.router(x)
+        probs, idx = self.router(x)
         out = torch.zeros_like(x)
 
-        for k in range(idx.size(-1)):
-            e = idx[...,k]
-            mask = torch.nn.functional.one_hot(e, len(self.experts)).float()
-            for i,expert in enumerate(self.experts):
-                out += expert(x) * mask[...,i:i+1] * w[...,k:k+1]
-
+        for i in range(self.router.k):
+            expert = idx[..., i]
+            weight = probs[..., i].unsqueeze(-1)
+            for e_id, expert_net in enumerate(self.experts):
+                mask = expert == e_id
+                if mask.any():
+                    out[mask] += expert_net(x[mask]) * weight[mask]
         return out

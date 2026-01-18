@@ -1,20 +1,18 @@
+from dataclasses import dataclass
+
+@dataclass
 class ModelConfig:
-    vocab_size = 50280
-    dim = 2048
-    n_layer = 24
-    n_head = 16
-    n_kv_head = 8
-    block_size = 32768
+    vocab_size: int = 50280
+    dim: int = 2048
+    n_layer: int = 24
+    n_head: int = 16
+    n_kv_head: int = 8
+    block_size: int = 32768
 
-    rope_base = 10000
-    rope_factor = 8.0
+    rope_base: int = 10000
+    rope_factor: float = 8.0
 
-    use_flash = True
-    use_mla = True
-    use_moe = True
-    use_mtp = True
+    moe_experts: int = 8
+    moe_topk: int = 2
 
-    moe_experts = 8
-    moe_topk = 2
-
-    dropout = 0.0
+    dropout: float = 0.0

@@ -17,6 +17,8 @@ class CausalSelfAttention(nn.Module):
         self.n_kv_head = n_kv_head
         self.head_dim = dim // n_head
         self.use_flash = use_flash
+        self.local_window = local_window
+        self.global_stride = global_stride
 
         self.q = nn.Linear(dim, dim, bias=False)
         self.kv = nn.Linear(dim, 2 * n_kv_head * self.head_dim, bias=False)

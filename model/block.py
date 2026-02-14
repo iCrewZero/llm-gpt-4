@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 
 from .attention import CausalSelfAttention
@@ -20,8 +21,13 @@ class DenseMLP(nn.Module):
 
 
 class Block(nn.Module):
+    """Hybrid block: transformer attention + state-space mixer with parallel residual pathways."""
+
     def __init__(self, cfg):
         super().__init__()
+        self.enable_shape_checks = cfg.enable_shape_checks
+        self.token_skip_threshold = cfg.token_skip_threshold
+
         self.norm1 = RMSNorm(cfg.dim)
         self.attn = CausalSelfAttention(
             cfg.dim,

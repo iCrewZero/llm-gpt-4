@@ -4,6 +4,61 @@ import torch.nn.functional as F
 from rl.grpo import grpo_loss
 from training.mtp_loss import mtp_loss
 from training.prm import ProcessRewardModel
+from training.scheduler import CurriculumLengthScheduler
+
+
+class ContinuousBatcher:
+    """Packs variable microbatches into a fixed token budget for continuous batching."""
+
+    def __init__(self, max_tokens_per_step: int):
+        self.max_tokens_per_step = max_tokens_per_step
+        self._queue = []
+
+    def add(self, sample):
+        self._queue.append(sample)
+
+    def pop_batch(self):
+        if not self._queue:
+            return None
+        batch, used = [], 0
+        while self._queue:
+            nxt = self._queue[0]
+            tokens = nxt["input_ids"].numel()
+            if batch and used + tokens > self.max_tokens_per_step:
+                break
+            batch.append(self._queue.pop(0))
+            used += tokens
+        return batch
+
+
+def _crop(item, seq_len: int):
+    return {
+        "input_ids": item["input_ids"][:seq_len],
+        "labels": item["labels"][:seq_len],
+    }
+
+
+def _collate(batch):
+    max_len = max(item["input_ids"].size(0) for item in batch)
+    input_ids, labels = [], []
+    for item in batch:
+        inp = item["input_ids"]
+        lbl = item["labels"]
+        pad = max_len - inp.size(0)
+        input_ids.append(F.pad(inp, (0, pad), value=0))
+        labels.append(F.pad(lbl, (0, pad), value=-100))
+    return {
+        "input_ids": torch.stack(input_ids, dim=0),
+        "labels": torch.stack(labels, dim=0),
+    }
+
+
+def _inject_grad_noise(model, std: float):
+    if std <= 0:
+        return
+    for p in model.parameters():
+        if p.grad is not None:
+            p.grad.add_(torch.randn_like(p.grad) * std)
 
 
 class ContinuousBatcher:

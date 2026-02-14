@@ -5,7 +5,6 @@ from .attention import CausalSelfAttention
 from .mla import MultiHeadLatentAttention
 from .moe import MoE
 from .rmsnorm import RMSNorm
-from .state_space import StateSpaceMixer
 
 
 class DenseMLP(nn.Module):
@@ -36,52 +35,32 @@ class Block(nn.Module):
             cfg.n_kv_head,
             cfg.rope_factor,
             rope_base=cfg.rope_base,
-            local_window=cfg.local_window,
-            global_stride=cfg.global_stride,
         )
 
         self.enable_mla = cfg.enable_mla
         self.enable_moe = cfg.enable_moe
 
         self.norm2 = RMSNorm(cfg.dim)
-        self.mla = (
-            MultiHeadLatentAttention(cfg.dim, cfg.n_head, cfg.mla_latent_dim, cfg.dropout)
-            if self.enable_mla
-            else None
-        )
+        if self.enable_mla:
+            self.mla = MultiHeadLatentAttention(cfg.dim, cfg.n_head, cfg.mla_latent_dim, cfg.dropout)
+        else:
+            self.mla = None
 
         self.norm3 = RMSNorm(cfg.dim)
-        self.ffn = (
-            MoE(
+        if self.enable_moe:
+            self.ffn = MoE(
                 cfg.dim,
                 cfg.moe_experts,
                 cfg.moe_topk,
                 cfg.moe_capacity_factor,
                 cfg.moe_balance_momentum,
             )
-            if self.enable_moe
-            else DenseMLP(cfg.dim)
-        )
-        self.ssm = StateSpaceMixer(cfg.dim)
-
-        self.skip_gate = nn.Linear(cfg.dim, 1)
-        self.res_mix = nn.Parameter(torch.tensor([0.5, 0.5], dtype=torch.float32))
+        else:
+            self.ffn = DenseMLP(cfg.dim)
 
     def forward(self, x, pos, kv_cache=None, layer_idx=None):
         stats = {}
-        x_norm = self.norm1(x)
-
-        token_importance = torch.sigmoid(self.skip_gate(x_norm))  # [B, T, 1]
-        skip_mask = (token_importance >= self.token_skip_threshold).to(x.dtype)
-
-        # Parallel residual: attention and SSM branches.
-        attn_out = self.attn(x_norm, start_pos=pos, kv_cache=kv_cache, layer_idx=layer_idx)
-        ssm_out = self.ssm(x_norm)
-        mix = torch.softmax(self.res_mix, dim=0)
-        mixed = mix[0] * attn_out + mix[1] * ssm_out
-
-        # Token-importance routing: low-importance tokens get less update.
-        x = x + mixed * skip_mask
+        x = x + self.attn(self.norm1(x), start_pos=pos, kv_cache=kv_cache, layer_idx=layer_idx)
 
         if self.enable_mla:
             x = x + self.mla(self.norm2(x))
@@ -94,5 +73,4 @@ class Block(nn.Module):
             ff_out = self.ffn(ff_in)
 
         x = x + ff_out
-        stats["skip_ratio"] = 1.0 - skip_mask.mean().detach()
         return x, stats

@@ -6,19 +6,7 @@ from .rope import YaRNRoPE
 
 
 class CausalSelfAttention(nn.Module):
-    """Hierarchical attention with local window + optional global token routing."""
-
-    def __init__(
-        self,
-        dim,
-        n_head,
-        n_kv_head,
-        rope_factor,
-        rope_base=10000,
-        use_flash=True,
-        local_window: int = 256,
-        global_stride: int = 64,
-    ):
+    def __init__(self, dim, n_head, n_kv_head, rope_factor, rope_base=10000, use_flash=True):
         super().__init__()
         if dim % n_head != 0:
             raise ValueError(f"dim ({dim}) must be divisible by n_head ({n_head})")
@@ -37,31 +25,6 @@ class CausalSelfAttention(nn.Module):
         self.o = nn.Linear(dim, dim, bias=False)
 
         self.rope = YaRNRoPE(self.head_dim, base=rope_base, factor=rope_factor)
-
-    def _local_causal_mask(self, seq_q: int, seq_k: int, device):
-        q_idx = torch.arange(seq_q, device=device).unsqueeze(-1)
-        k_idx = torch.arange(seq_k, device=device).unsqueeze(0)
-        causal = k_idx <= q_idx + (seq_k - seq_q)
-        if self.local_window > 0:
-            lower = q_idx + (seq_k - seq_q) - self.local_window
-            causal = causal & (k_idx >= lower)
-        return causal
-
-    def _apply_hierarchical(self, q, k, v):
-        b, h, tq, d = q.shape
-        tk = k.size(2)
-
-        local_mask = self._local_causal_mask(tq, tk, q.device)
-        attn_local = F.scaled_dot_product_attention(q, k, v, attn_mask=local_mask)
-
-        if self.global_stride <= 0 or tk < self.global_stride:
-            return attn_local
-
-        g_idx = torch.arange(0, tk, self.global_stride, device=q.device)
-        k_global = k.index_select(2, g_idx)
-        v_global = v.index_select(2, g_idx)
-        attn_global = F.scaled_dot_product_attention(q, k_global, v_global, is_causal=False)
-        return 0.7 * attn_local + 0.3 * attn_global
 
     def forward(self, x, start_pos=0, kv_cache=None, layer_idx=None):
         bsz, seqlen, dim = x.shape
@@ -86,6 +49,6 @@ class CausalSelfAttention(nn.Module):
         k = k.repeat_interleave(self.n_head // self.n_kv_head, dim=1)
         v = v.repeat_interleave(self.n_head // self.n_kv_head, dim=1)
 
-        out = self._apply_hierarchical(q, k, v)
+        out = F.scaled_dot_product_attention(q, k, v, is_causal=True)
         out = out.transpose(1, 2).reshape(bsz, seqlen, dim)
         return self.o(out)

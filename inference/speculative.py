@@ -2,50 +2,44 @@ import torch
 
 
 class SpeculativeDecoder:
-    """Draft/target speculative decoding with support for multi-draft competition."""
+    """Draft/target speculative decoding with accept-reject verification."""
 
-    def __init__(self, draft_models, main_model, draft_steps: int = 4):
-        if not isinstance(draft_models, (list, tuple)):
-            draft_models = [draft_models]
-        self.drafts = list(draft_models)
+    def __init__(self, draft_model, main_model, verifier=None, draft_steps: int = 4):
+        self.draft = draft_model
         self.main = main_model
+        self.verifier = verifier
         self.draft_steps = draft_steps
-
-    @torch.no_grad()
-    def _propose(self, input_ids):
-        proposals = []
-        for draft in self.drafts:
-            proposal = input_ids
-            for _ in range(self.draft_steps):
-                draft_logits = draft(proposal)["logits"]
-                draft_token = torch.argmax(draft_logits[:, -1, :], dim=-1, keepdim=True)
-                proposal = torch.cat([proposal, draft_token], dim=1)
-            proposals.append(proposal)
-        return proposals
 
     @torch.no_grad()
     def generate(self, input_ids, max_new_tokens=32):
         device = next(self.main.parameters()).device
         input_ids = input_ids.to(device)
+
         target_len = input_ids.size(1) + max_new_tokens
-
         while input_ids.size(1) < target_len:
-            proposals = self._propose(input_ids)
-            best_candidate = None
-            best_score = -float("inf")
+            proposal = input_ids
+            for _ in range(self.draft_steps):
+                draft_logits = self.draft(proposal)["logits"]
+                draft_token = torch.argmax(draft_logits[:, -1, :], dim=-1, keepdim=True)
+                proposal = torch.cat([proposal, draft_token], dim=1)
 
-            for proposal in proposals:
-                out = self.main(proposal)
-                logits = out["logits"][:, -self.draft_steps :, :]
-                chosen = proposal[:, -self.draft_steps :]
-                token_logp = torch.log_softmax(logits, dim=-1)
-                score = token_logp.gather(-1, chosen.unsqueeze(-1)).squeeze(-1).mean().item()
-                if score > best_score:
-                    best_score = score
-                    best_candidate = proposal
+            main_out = self.main(proposal)
+            main_logits = main_out["logits"][:, -self.draft_steps :, :]
+            main_tokens = torch.argmax(main_logits, dim=-1)
+            proposed_tokens = proposal[:, -self.draft_steps :]
 
-            input_ids = best_candidate
+            matches = (main_tokens == proposed_tokens).all(dim=-1)
+            if self.verifier is not None:
+                verify = main_out["value"][:, -1].sigmoid() > 0.5
+                matches = matches & verify
+
+            if matches.item():
+                input_ids = proposal
+            else:
+                next_token = main_tokens[:, :1]
+                input_ids = torch.cat([input_ids, next_token], dim=1)
+
             if input_ids.size(1) >= target_len:
                 break
 
-        return input_ids[:, :target_len]
+        return input_ids

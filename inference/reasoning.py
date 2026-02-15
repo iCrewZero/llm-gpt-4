@@ -73,3 +73,34 @@ class MCTSReasoner:
             return input_ids
         best = max(root.children.values(), key=lambda c: c.visits)
         return best.tokens
+
+
+@torch.no_grad()
+def self_refine_chain(model, input_ids, refine_steps: int = 3, memory_bank=None):
+    tokens = input_ids
+    for _ in range(refine_steps):
+        out = model(tokens, memory_bank=memory_bank)
+        nxt = torch.argmax(out["logits"][:, -1, :], dim=-1, keepdim=True)
+        tokens = torch.cat([tokens, nxt], dim=1)
+        # verifier-guided rollback
+        score = out["value"][:, -1].sigmoid()
+        if score.item() < 0.4 and tokens.size(1) > 2:
+            tokens = tokens[:, :-1]
+    return tokens
+
+
+@torch.no_grad()
+def tree_of_thought_beam(model, input_ids, beam_width: int = 4, depth: int = 4):
+    beams = [(input_ids, 0.0)]
+    for _ in range(depth):
+        next_beams = []
+        for tokens, score in beams:
+            out = model(tokens)
+            logp = torch.log_softmax(out["logits"][:, -1, :], dim=-1)
+            vals, idx = torch.topk(logp, beam_width, dim=-1)
+            for i in range(beam_width):
+                tok = idx[:, i : i + 1]
+                next_beams.append((torch.cat([tokens, tok], dim=1), score + float(vals[0, i].item())))
+        next_beams.sort(key=lambda x: x[1], reverse=True)
+        beams = next_beams[:beam_width]
+    return beams[0][0]

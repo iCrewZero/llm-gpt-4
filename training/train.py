@@ -2,8 +2,10 @@ import torch
 import torch.nn.functional as F
 
 from rl.grpo import grpo_loss
-from training.mtp_loss import mtp_loss
+from training.losses import compute_all_losses, dynamic_weighted_loss
+from training.precision import PrecisionManager
 from training.prm import ProcessRewardModel
+from training.scheduler import CurriculumLengthScheduler
 
 
 class ContinuousBatcher:
@@ -30,6 +32,13 @@ class ContinuousBatcher:
         return batch
 
 
+def _crop(item, seq_len: int):
+    return {
+        "input_ids": item["input_ids"][:seq_len],
+        "labels": item["labels"][:seq_len],
+    }
+
+
 def _collate(batch):
     max_len = max(item["input_ids"].size(0) for item in batch)
     input_ids, labels = [], []
@@ -45,54 +54,89 @@ def _collate(batch):
     }
 
 
-def train_step(model, batch, optimizer, scheduler=None, prm: ProcessRewardModel = None, group_size: int = 4):
+def _inject_grad_noise(model, std: float):
+    if std <= 0:
+        return
+    for p in model.parameters():
+        if p.grad is not None:
+            p.grad.add_(torch.randn_like(p.grad) * std)
+
+
+def train_step(
+    model,
+    batch,
+    optimizer,
+    scheduler=None,
+    prm: ProcessRewardModel = None,
+    group_size: int = 4,
+    teacher_model=None,
+    precision: PrecisionManager | None = None,
+    grad_noise_std: float = 0.0,
+    loss_ema_state: dict[str, float] | None = None,
+):
     model.train()
     device = next(model.parameters()).device
     input_ids = batch["input_ids"].to(device)
     labels = batch["labels"].to(device)
 
-    out = model(input_ids, return_hidden=True, return_router=True)
-    logits = out["logits"]
+    loss_ema_state = loss_ema_state if loss_ema_state is not None else {}
+    precision = precision if precision is not None else PrecisionManager()
 
-    ce = F.cross_entropy(
-        logits[:, :-1, :].reshape(-1, logits.size(-1)),
-        labels[:, 1:].reshape(-1),
-        ignore_index=-100,
-    )
-    loss = ce
+    with precision.autocast():
+        out = model(input_ids, return_hidden=True, return_router=True)
+        teacher_repr = None
+        if teacher_model is not None:
+            with torch.no_grad():
+                t_out = teacher_model(input_ids, return_hidden=True)
+                teacher_repr = t_out["hidden"].detach()
 
-    if "mtp_logits" in out:
-        loss = loss + mtp_loss(out["mtp_logits"], labels)
+        losses = compute_all_losses(out, labels, teacher_repr=teacher_repr)
 
-    if prm is not None:
-        token_logp = F.log_softmax(logits[:, :-1, :], dim=-1)
-        actions = labels[:, 1:].clamp_min(0)
-        chosen_logp = token_logp.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
+        if prm is not None:
+            token_logp = F.log_softmax(out["logits"][:, :-1, :], dim=-1)
+            actions = labels[:, 1:].clamp_min(0)
+            chosen_logp = token_logp.gather(-1, actions.unsqueeze(-1)).squeeze(-1)
+            rewards = prm.sequence_reward(out["hidden"].detach())
+            losses["grpo"] = grpo_loss(chosen_logp, rewards, group_size=group_size)
 
-        rewards = prm.sequence_reward(out["hidden"].detach())
-        loss = loss + grpo_loss(chosen_logp, rewards, group_size=group_size)
+        loss, dynamic_weights = dynamic_weighted_loss(losses, loss_ema_state)
 
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
+    _inject_grad_noise(model, grad_noise_std)
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
     optimizer.step()
     if scheduler:
         scheduler.step()
 
-    return {
-        "loss": float(loss.detach().cpu().item()),
-        "ce": float(ce.detach().cpu().item()),
-    }
+    metrics = {k: float(v.detach().cpu().item()) for k, v in losses.items()}
+    metrics["loss"] = float(loss.detach().cpu().item())
+    metrics["weights"] = dynamic_weights
+    return metrics
 
 
-def train_continuous(model, optimizer, stream, max_tokens_per_step: int, scheduler=None, prm=None):
+def train_continuous(
+    model,
+    optimizer,
+    stream,
+    max_tokens_per_step: int,
+    total_steps: int,
+    curriculum_start_len: int,
+    curriculum_end_len: int,
+    scheduler=None,
+    prm=None,
+    **train_step_kwargs,
+):
     batcher = ContinuousBatcher(max_tokens_per_step=max_tokens_per_step)
+    curriculum = CurriculumLengthScheduler(curriculum_start_len, curriculum_end_len, total_steps)
     metrics = []
-    for sample in stream:
-        batcher.add(sample)
+
+    for step, sample in enumerate(stream):
+        seq_len = curriculum(step)
+        batcher.add(_crop(sample, seq_len))
         packed = batcher.pop_batch()
         if packed is None:
             continue
         collated = _collate(packed)
-        metrics.append(train_step(model, collated, optimizer, scheduler=scheduler, prm=prm))
+        metrics.append(train_step(model, collated, optimizer, scheduler=scheduler, prm=prm, **train_step_kwargs))
     return metrics

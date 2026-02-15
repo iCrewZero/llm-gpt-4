@@ -17,6 +17,10 @@ class ModelConfig:
 
     dropout: float = 0.0
 
+    # hierarchical attention
+    local_window: int = 256
+    global_stride: int = 64
+
     # MLA
     enable_mla: bool = True
     mla_latent_dim: int = 512
@@ -31,6 +35,9 @@ class ModelConfig:
     # MTP head
     enable_mtp: bool = True
     mtp_steps: int = 3
+
+    # token importance routing
+    token_skip_threshold: float = 0.15
 
     # Systems / perf toggles
     enable_fp8_hooks: bool = False

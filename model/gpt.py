@@ -3,9 +3,11 @@ import torch.nn as nn
 
 from model.block import Block
 from model.config import ModelConfig
+from model.heads import DistillationHead, RetrievalHead
 from model.rmsnorm import RMSNorm
 from model.verifier import VerifierHead
 from training.mtp import MTPHead
+from training.prm import ProcessRewardModel
 
 
 class GPT(nn.Module):
@@ -19,9 +21,13 @@ class GPT(nn.Module):
 
         self.lm_head = nn.Linear(cfg.dim, cfg.vocab_size, bias=False)
         self.verifier = VerifierHead(cfg.dim)
+        self.prm_head = ProcessRewardModel(cfg.dim)
+        self.distill_head = DistillationHead(cfg.dim)
+        self.retrieval_head = RetrievalHead(cfg.dim)
         self.mtp_head = MTPHead(cfg.dim, cfg.vocab_size, cfg.mtp_steps) if cfg.enable_mtp else None
 
     def init_kv_cache(self, batch_size: int):
+        _ = batch_size
         return [{"k": None, "v": None} for _ in range(self.cfg.n_layer)]
 
     def _validate_shapes(self, input_ids):
@@ -37,6 +43,7 @@ class GPT(nn.Module):
         kv_cache=None,
         return_hidden: bool = False,
         return_router: bool = False,
+        memory_bank=None,
     ):
         if self.cfg.enable_shape_checks:
             self._validate_shapes(input_ids)
@@ -54,6 +61,9 @@ class GPT(nn.Module):
         out = {
             "logits": logits,
             "value": self.verifier(x),
+            "prm": self.prm_head(x),
+            "distill": self.distill_head(x),
+            "retrieval_scores": self.retrieval_head(x, memory_bank=memory_bank),
         }
 
         if self.mtp_head is not None:

@@ -2,10 +2,12 @@ import torch
 
 
 class SequenceKVCache:
-    """Simple per-layer KV cache with optional feedback trimming for reasoning revisions."""
+    """Per-layer KV cache with token budget eviction and feedback trimming."""
 
-    def __init__(self, n_layers: int):
+    def __init__(self, n_layers: int, max_tokens: int = 8192, keep_tokens_on_evict: int = 2048):
         self.layers = [{"k": None, "v": None} for _ in range(n_layers)]
+        self.max_tokens = max_tokens
+        self.keep_tokens_on_evict = keep_tokens_on_evict
 
     def as_model_cache(self):
         return self.layers
@@ -16,6 +18,14 @@ class SequenceKVCache:
             return
         layer["k"] = layer["k"][:, -keep_last_tokens:, :, :].contiguous()
         layer["v"] = layer["v"][:, -keep_last_tokens:, :, :].contiguous()
+
+    def evict_if_needed(self):
+        for layer in self.layers:
+            if layer["k"] is None:
+                continue
+            if layer["k"].size(1) > self.max_tokens:
+                layer["k"] = layer["k"][:, -self.keep_tokens_on_evict :, :, :].contiguous()
+                layer["v"] = layer["v"][:, -self.keep_tokens_on_evict :, :, :].contiguous()
 
     def clear(self):
         for layer in self.layers:

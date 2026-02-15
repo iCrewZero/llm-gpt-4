@@ -7,6 +7,8 @@ block_size: 4096
 rope_base: 10000
 rope_factor: 8.0
 dropout: 0.0
+local_window: 256
+global_stride: 64
 enable_mla: true
 mla_latent_dim: 512
 enable_moe: true
@@ -16,6 +18,7 @@ moe_capacity_factor: 1.25
 moe_balance_momentum: 0.95
 enable_mtp: true
 mtp_steps: 3
+token_skip_threshold: 0.15
 enable_fp8_hooks: false
 enable_nvfp4_hooks: false
 enable_shape_checks: true

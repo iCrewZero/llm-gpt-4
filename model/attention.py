@@ -6,7 +6,7 @@ from .rope import YaRNRoPE
 
 
 class CausalSelfAttention(nn.Module):
-    """Hierarchical attention with local window + optional global token routing."""
+    """Hierarchical attention with local window + global tokens + head specialization routing."""
 
     def __init__(
         self,
@@ -32,9 +32,13 @@ class CausalSelfAttention(nn.Module):
         self.local_window = local_window
         self.global_stride = global_stride
 
+        # MQA/GQA hybrid: q has n_head, k/v have n_kv_head and are broadcast to groups.
         self.q = nn.Linear(dim, dim, bias=False)
         self.kv = nn.Linear(dim, 2 * n_kv_head * self.head_dim, bias=False)
         self.o = nn.Linear(dim, dim, bias=False)
+
+        # Head specialization routing: token-wise head scaling in [0,1].
+        self.head_router = nn.Linear(dim, n_head, bias=True)
 
         self.rope = YaRNRoPE(self.head_dim, base=rope_base, factor=rope_factor)
 
@@ -48,8 +52,8 @@ class CausalSelfAttention(nn.Module):
         return causal
 
     def _apply_hierarchical(self, q, k, v):
-        b, h, tq, d = q.shape
         tk = k.size(2)
+        tq = q.size(2)
 
         local_mask = self._local_causal_mask(tq, tk, q.device)
         attn_local = F.scaled_dot_product_attention(q, k, v, attn_mask=local_mask)
@@ -85,6 +89,10 @@ class CausalSelfAttention(nn.Module):
         v = v.transpose(1, 2)
         k = k.repeat_interleave(self.n_head // self.n_kv_head, dim=1)
         v = v.repeat_interleave(self.n_head // self.n_kv_head, dim=1)
+
+        # head specialization routing (per token/head weights)
+        head_weight = torch.sigmoid(self.head_router(x)).transpose(1, 2).unsqueeze(-1)  # [B,H,T,1]
+        q = q * head_weight
 
         out = self._apply_hierarchical(q, k, v)
         out = out.transpose(1, 2).reshape(bsz, seqlen, dim)

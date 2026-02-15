@@ -22,17 +22,22 @@ class ModelConfig:
 
     enable_mla: bool = True
     mla_latent_dim: int = 512
+    mla_multires_levels: int = 3
 
     enable_moe: bool = True
     moe_experts: int = 8
     moe_topk: int = 2
     moe_capacity_factor: float = 1.25
     moe_balance_momentum: float = 0.95
+    moe_expert_dropout: float = 0.05
+    moe_adapter_rank: int = 32
 
     enable_mtp: bool = True
     mtp_steps: int = 3
 
     token_skip_threshold: float = 0.15
+
+    adaptive_ffn_multiplier: int = 4
 
     enable_fp8_hooks: bool = False
     enable_nvfp4_hooks: bool = False
@@ -49,3 +54,7 @@ class ModelConfig:
             raise ValueError("mtp_steps must be >= 1")
         if not (0.0 <= self.token_skip_threshold <= 1.0):
             raise ValueError("token_skip_threshold must be in [0,1]")
+        if self.mla_multires_levels < 1:
+            raise ValueError("mla_multires_levels must be >= 1")
+        if self.moe_adapter_rank < 1:
+            raise ValueError("moe_adapter_rank must be >= 1")

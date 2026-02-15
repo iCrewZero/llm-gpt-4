@@ -8,21 +8,26 @@ from .rmsnorm import RMSNorm
 from .state_space import StateSpaceMixer
 
 
-class DenseMLP(nn.Module):
-    def __init__(self, dim: int):
+class AdaptiveDenseFFN(nn.Module):
+    """Dense FFN with channel-wise adaptive expansion gating."""
+
+    def __init__(self, dim: int, multiplier: int = 4):
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(dim, dim * 4),
-            nn.GELU(),
-            nn.Linear(dim * 4, dim),
-        )
+        hidden = dim * multiplier
+        self.fc1 = nn.Linear(dim, hidden)
+        self.fc2 = nn.Linear(hidden, dim)
+        self.act = nn.GELU()
+        self.channel_gate = nn.Linear(dim, hidden)
 
     def forward(self, x):
-        return self.net(x)
+        h = self.fc1(x)
+        gate = torch.sigmoid(self.channel_gate(x))
+        h = self.act(h) * gate
+        return self.fc2(h)
 
 
 class Block(nn.Module):
-    """Hybrid block: transformer attention + state-space mixer with parallel residual pathways."""
+    """Hybrid block with parallel transformer/SSM pathways and token-adaptive depth routing."""
 
     def __init__(self, cfg):
         super().__init__()
@@ -45,7 +50,13 @@ class Block(nn.Module):
 
         self.norm2 = RMSNorm(cfg.dim)
         self.mla = (
-            MultiHeadLatentAttention(cfg.dim, cfg.n_head, cfg.mla_latent_dim, cfg.dropout)
+            MultiHeadLatentAttention(
+                cfg.dim,
+                cfg.n_head,
+                cfg.mla_latent_dim,
+                cfg.dropout,
+                multires_levels=cfg.mla_multires_levels,
+            )
             if self.enable_mla
             else None
         )
@@ -58,14 +69,16 @@ class Block(nn.Module):
                 cfg.moe_topk,
                 cfg.moe_capacity_factor,
                 cfg.moe_balance_momentum,
+                expert_dropout=cfg.moe_expert_dropout,
+                adapter_rank=cfg.moe_adapter_rank,
             )
             if self.enable_moe
-            else DenseMLP(cfg.dim)
+            else AdaptiveDenseFFN(cfg.dim, multiplier=cfg.adaptive_ffn_multiplier)
         )
         self.ssm = StateSpaceMixer(cfg.dim)
 
         self.skip_gate = nn.Linear(cfg.dim, 1)
-        self.res_mix = nn.Parameter(torch.tensor([0.5, 0.5], dtype=torch.float32))
+        self.branch_gate = nn.Linear(cfg.dim, 1)
 
     def forward(self, x, pos, kv_cache=None, layer_idx=None):
         stats = {}
@@ -74,13 +87,13 @@ class Block(nn.Module):
         token_importance = torch.sigmoid(self.skip_gate(x_norm))  # [B, T, 1]
         skip_mask = (token_importance >= self.token_skip_threshold).to(x.dtype)
 
-        # Parallel residual: attention and SSM branches.
         attn_out = self.attn(x_norm, start_pos=pos, kv_cache=kv_cache, layer_idx=layer_idx)
         ssm_out = self.ssm(x_norm)
-        mix = torch.softmax(self.res_mix, dim=0)
-        mixed = mix[0] * attn_out + mix[1] * ssm_out
 
-        # Token-importance routing: low-importance tokens get less update.
+        # Gated residual mixing (token-wise) between transformer and SSM branches.
+        gate = torch.sigmoid(self.branch_gate(x_norm))
+        mixed = gate * attn_out + (1.0 - gate) * ssm_out
+
         x = x + mixed * skip_mask
 
         if self.enable_mla:
@@ -95,4 +108,5 @@ class Block(nn.Module):
 
         x = x + ff_out
         stats["skip_ratio"] = 1.0 - skip_mask.mean().detach()
+        stats["branch_gate_mean"] = gate.mean().detach()
         return x, stats

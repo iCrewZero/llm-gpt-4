@@ -2,8 +2,6 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Dict, Type, TypeVar
 
-import yaml
-
 from model.config import ModelConfig
 
 T = TypeVar("T")
@@ -57,9 +55,34 @@ class InferenceConfig:
     decode_chunk_size: int = 1
 
 
-def _load_yaml(path: str | Path) -> Dict[str, Any]:
+def _parse_scalar(value: str) -> Any:
+    v = value.strip()
+    if v.lower() in {"true", "false"}:
+        return v.lower() == "true"
+    if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+        return v[1:-1]
+    try:
+        if any(ch in v for ch in [".", "e", "E"]):
+            return float(v)
+        return int(v)
+    except ValueError:
+        return v
+
+
+def _load_simple_yaml(path: str | Path) -> Dict[str, Any]:
+    """Minimal key: value parser for flat config files used in this repo.
+
+    Supports booleans, ints, floats and strings. Ignores comments and blank lines.
+    """
+    data: Dict[str, Any] = {}
     with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        for raw in f:
+            line = raw.split("#", 1)[0].strip()
+            if not line or ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            data[key.strip()] = _parse_scalar(value)
+    return data
 
 
 def _filter_for_dataclass(data: Dict[str, Any], cls: Type[T]) -> Dict[str, Any]:
@@ -68,8 +91,8 @@ def _filter_for_dataclass(data: Dict[str, Any], cls: Type[T]) -> Dict[str, Any]:
 
 
 def load_configs(model_path: str | Path, train_path: str | Path):
-    model_data = _load_yaml(model_path)
-    train_data = _load_yaml(train_path)
+    model_data = _load_simple_yaml(model_path)
+    train_data = _load_simple_yaml(train_path)
 
     model_cfg = ModelConfig(**_filter_for_dataclass(model_data, ModelConfig))
     train_cfg = TrainingConfig(**_filter_for_dataclass(train_data, TrainingConfig))

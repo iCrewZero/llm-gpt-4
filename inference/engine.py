@@ -4,7 +4,7 @@ from inference.kv_cache import SequenceKVCache
 from inference.reasoning import MCTSReasoner, self_refine_chain, tree_of_thought_beam
 from inference.speculative import SpeculativeDecoder
 from inference.contracts import InferRequest, InferResponse
-from utils.tensor_checks import assert_rank
+from utils.tensor_checks import assert_dtype, assert_rank
 
 
 class ContinuousRequestBatcher:
@@ -75,6 +75,8 @@ class Engine:
 
             for prompt in batch_prompts:
                 ids = torch.tensor(self.tokenizer.encode(prompt), device=device).unsqueeze(0)
+                assert_rank(ids, 2, "request.input_ids")
+                assert_dtype(ids, [torch.long, torch.int64], "request.input_ids")
 
                 if reasoning_mode == "mcts" and self.reasoner is not None:
                     ids = self.reasoner.search(ids)

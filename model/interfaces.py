@@ -33,3 +33,29 @@ class BaseLLM(Protocol):
         memory_bank: Optional[torch.Tensor] = None,
     ) -> ModelOutput:
         ...
+
+
+class BaseReasoner(Protocol):
+    def search(self, input_ids: torch.Tensor) -> torch.Tensor:
+        ...
+
+
+class BaseSpecDecoder(Protocol):
+    def generate(self, input_ids: torch.Tensor, max_new_tokens: int = 32) -> torch.Tensor:
+        ...
+
+
+class BasePRM(Protocol):
+    def sequence_reward(self, hidden: torch.Tensor) -> torch.Tensor:
+        ...
+
+
+class BaseKVCache(Protocol):
+    def as_model_cache(self) -> KVCacheState:
+        ...
+
+    def evict_if_needed(self) -> None:
+        ...
+
+    def clear(self) -> None:
+        ...

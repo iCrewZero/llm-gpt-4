@@ -3,6 +3,8 @@ import torch
 from inference.kv_cache import SequenceKVCache
 from inference.reasoning import MCTSReasoner, self_refine_chain, tree_of_thought_beam
 from inference.speculative import SpeculativeDecoder
+from inference.contracts import InferRequest, InferResponse
+from utils.tensor_checks import assert_rank
 
 
 class ContinuousRequestBatcher:
@@ -98,3 +100,16 @@ class Engine:
                 outputs.append(self.tokenizer.decode(out_ids[0].tolist()))
 
         return outputs
+
+    @torch.no_grad()
+    def generate_requests(self, requests: list[InferRequest], memory_bank=None) -> list[InferResponse]:
+        prompts = [r.prompt for r in requests]
+        max_new = max((r.max_new_tokens for r in requests), default=128)
+        mode = requests[0].reasoning_mode if requests else None
+        texts = self.generate(prompts, max_new=max_new, reasoning_mode=mode, memory_bank=memory_bank)
+        out: list[InferResponse] = []
+        for t in texts:
+            ids = torch.tensor(self.tokenizer.encode(t))
+            assert_rank(ids, 1, "response.token_ids")
+            out.append(InferResponse(text=t, token_ids=ids))
+        return out

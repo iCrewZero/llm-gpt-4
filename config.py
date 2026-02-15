@@ -35,6 +35,16 @@ class TrainingConfig:
     loss_contrastive_weight: float = 0.05
     loss_distill_weight: float = 0.1
 
+    def validate(self) -> None:
+        if self.batch_size < 1:
+            raise ValueError("batch_size must be >= 1")
+        if self.grad_accum < 1:
+            raise ValueError("grad_accum must be >= 1")
+        if self.group_size < 1:
+            raise ValueError("group_size must be >= 1")
+        if self.max_tokens_per_step < 1:
+            raise ValueError("max_tokens_per_step must be >= 1")
+
 
 @dataclass
 class InferenceConfig:
@@ -53,6 +63,14 @@ class InferenceConfig:
 
     prefill_chunk_size: int = 1024
     decode_chunk_size: int = 1
+
+    def validate(self) -> None:
+        if self.max_batch_size < 1:
+            raise ValueError("max_batch_size must be >= 1")
+        if self.speculative_steps < 1:
+            raise ValueError("speculative_steps must be >= 1")
+        if self.kv_evict_keep > self.kv_max_tokens:
+            raise ValueError("kv_evict_keep must be <= kv_max_tokens")
 
 
 def _parse_scalar(value: str) -> Any:
@@ -97,4 +115,8 @@ def load_configs(model_path: str | Path, train_path: str | Path):
     model_cfg = ModelConfig(**_filter_for_dataclass(model_data, ModelConfig))
     train_cfg = TrainingConfig(**_filter_for_dataclass(train_data, TrainingConfig))
     infer_cfg = InferenceConfig(**_filter_for_dataclass(train_data, InferenceConfig))
+
+    model_cfg.validate()
+    train_cfg.validate()
+    infer_cfg.validate()
     return model_cfg, train_cfg, infer_cfg

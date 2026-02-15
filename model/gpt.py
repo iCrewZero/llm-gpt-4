@@ -4,10 +4,12 @@ import torch.nn as nn
 from model.block import Block
 from model.config import ModelConfig
 from model.heads import DistillationHead, RetrievalHead
+from model.interfaces import ModelOutput
 from model.rmsnorm import RMSNorm
 from model.verifier import VerifierHead
 from training.mtp import MTPHead
 from training.prm import ProcessRewardModel
+from utils.tensor_checks import assert_dtype, assert_rank, safe_clamp_logits
 
 
 class GPT(nn.Module):
@@ -44,9 +46,11 @@ class GPT(nn.Module):
         return_hidden: bool = False,
         return_router: bool = False,
         memory_bank=None,
-    ):
+    ) -> ModelOutput:
         if self.cfg.enable_shape_checks:
             self._validate_shapes(input_ids)
+            assert_rank(input_ids, 2, "input_ids")
+            assert_dtype(input_ids, [torch.long, torch.int64], "input_ids")
 
         x = self.embed(input_ids)
         router_stats = []
@@ -57,7 +61,7 @@ class GPT(nn.Module):
                 router_stats.append(stats)
 
         x = self.norm(x)
-        logits = self.lm_head(x)
+        logits = safe_clamp_logits(self.lm_head(x), clip_value=30.0)
         out = {
             "logits": logits,
             "value": self.verifier(x),

@@ -6,6 +6,8 @@ from training.losses import compute_all_losses, dynamic_weighted_loss
 from training.precision import PrecisionManager
 from training.prm import ProcessRewardModel
 from training.scheduler import CurriculumLengthScheduler
+from training.contracts import TrainBatch, TrainMetrics
+from utils.tensor_checks import assert_dtype, assert_rank, assert_same_device
 
 
 class ContinuousBatcher:
@@ -64,7 +66,7 @@ def _inject_grad_noise(model, std: float):
 
 def train_step(
     model,
-    batch,
+    batch: TrainBatch,
     optimizer,
     scheduler=None,
     prm: ProcessRewardModel = None,
@@ -73,11 +75,16 @@ def train_step(
     precision: PrecisionManager | None = None,
     grad_noise_std: float = 0.0,
     loss_ema_state: dict[str, float] | None = None,
-):
+) -> TrainMetrics:
     model.train()
     device = next(model.parameters()).device
     input_ids = batch["input_ids"].to(device)
     labels = batch["labels"].to(device)
+    assert_rank(input_ids, 2, "batch.input_ids")
+    assert_rank(labels, 2, "batch.labels")
+    assert_dtype(input_ids, [torch.long, torch.int64], "batch.input_ids")
+    assert_dtype(labels, [torch.long, torch.int64], "batch.labels")
+    assert_same_device(input_ids, labels)
 
     loss_ema_state = loss_ema_state if loss_ema_state is not None else {}
     precision = precision if precision is not None else PrecisionManager()

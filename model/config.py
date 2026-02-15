@@ -17,29 +17,35 @@ class ModelConfig:
 
     dropout: float = 0.0
 
-    # hierarchical attention
     local_window: int = 256
     global_stride: int = 64
 
-    # MLA
     enable_mla: bool = True
     mla_latent_dim: int = 512
 
-    # MoE
     enable_moe: bool = True
     moe_experts: int = 8
     moe_topk: int = 2
     moe_capacity_factor: float = 1.25
     moe_balance_momentum: float = 0.95
 
-    # MTP head
     enable_mtp: bool = True
     mtp_steps: int = 3
 
-    # token importance routing
     token_skip_threshold: float = 0.15
 
-    # Systems / perf toggles
     enable_fp8_hooks: bool = False
     enable_nvfp4_hooks: bool = False
     enable_shape_checks: bool = True
+
+    def validate(self) -> None:
+        if self.dim % self.n_head != 0:
+            raise ValueError("dim must be divisible by n_head")
+        if self.n_head % self.n_kv_head != 0:
+            raise ValueError("n_head must be divisible by n_kv_head")
+        if self.moe_topk > self.moe_experts:
+            raise ValueError("moe_topk must be <= moe_experts")
+        if self.mtp_steps < 1:
+            raise ValueError("mtp_steps must be >= 1")
+        if not (0.0 <= self.token_skip_threshold <= 1.0):
+            raise ValueError("token_skip_threshold must be in [0,1]")
